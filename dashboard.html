@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Estação Meteorológica Urbana</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 16px; background: #f4f6f8; color: #222; }
+    h1 { font-size: 1.4rem; text-align: center; }
+    .cards { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-bottom: 16px; }
+    .card { background: #fff; border-radius: 8px; padding: 16px; min-width: 150px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+    .valor { font-size: 2rem; font-weight: bold; }
+    .grafico { background: #fff; border-radius: 8px; padding: 12px; max-width: 900px; margin: 0 auto 16px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+    #status { text-align: center; font-size: 0.9rem; color: #666; }
+    #alerta { max-width: 900px; margin: 0 auto 16px; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold; }
+    .alerta-ok { background: #e6f4ea; color: #1e6b34; }
+    .alerta-calor { background: #fde8e8; color: #b42318; }
+    #mapa { height: 300px; border-radius: 8px; }
+    table.stats { border-collapse: collapse; margin: 0 auto; width: 100%; max-width: 600px; }
+    table.stats th, table.stats td { padding: 8px; border-bottom: 1px solid #ddd; text-align: center; }
+    h2 { font-size: 1.1rem; text-align: center; margin: 0 0 8px; }
+  </style>
+</head>
+<body>
+  <h1>Estação Meteorológica Urbana</h1>
+
+  <div id="alerta" class="alerta-ok">Carregando...</div>
+
+  <div class="cards">
+    <div class="card">
+      <div>Temperatura</div>
+      <div class="valor" id="temp-atual">--</div>
+    </div>
+    <div class="card">
+      <div>Umidade</div>
+      <div class="valor" id="umid-atual">--</div>
+    </div>
+  </div>
+
+  <div class="grafico">
+    <h2>Estatísticas das últimas leituras</h2>
+    <table class="stats">
+      <tr><th></th><th>Média</th><th>Mínima</th><th>Máxima</th></tr>
+      <tr><td>Temperatura (°C)</td><td id="t-media">--</td><td id="t-min">--</td><td id="t-max">--</td></tr>
+      <tr><td>Umidade (%)</td><td id="u-media">--</td><td id="u-min">--</td><td id="u-max">--</td></tr>
+    </table>
+  </div>
+
+  <div class="grafico">
+    <h2>Localização da estação</h2>
+    <div id="mapa"></div>
+  </div>
+
+  <div class="grafico"><canvas id="grafico-temp"></canvas></div>
+  <div class="grafico"><canvas id="grafico-umid"></canvas></div>
+  <p id="status">Carregando...</p>
+
+  <script>
+    const LIMITE_CALOR = 33;
+
+    function criarGrafico(id, rotulo, cor) {
+      return new Chart(document.getElementById(id), {
+        type: "line",
+        data: { labels: [], datasets: [{ label: rotulo, data: [], borderColor: cor, tension: 0.3 }] },
+        options: { animation: false }
+      });
+    }
+
+    const graficoTemp = criarGrafico("grafico-temp", "Temperatura (°C)", "#d9480f");
+    const graficoUmid = criarGrafico("grafico-umid", "Umidade (%)", "#1c7ed6");
+
+    function estatisticas(valores) {
+      const soma = valores.reduce((a, b) => a + b, 0);
+      return {
+        media: soma / valores.length,
+        minima: Math.min(...valores),
+        maxima: Math.max(...valores)
+      };
+    }
+
+    let mapa = null;
+    let marcador = null;
+
+    async function iniciarMapa() {
+      try {
+        const resposta = await fetch("/estacao");
+        const estacao = await resposta.json();
+        mapa = L.map("mapa").setView([estacao.latitude, estacao.longitude], 13);
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+          attribution: "© OpenStreetMap"
+        }).addTo(mapa);
+        marcador = L.marker([estacao.latitude, estacao.longitude]).addTo(mapa).bindPopup(estacao.nome);
+      } catch (erro) {
+        document.getElementById("mapa").textContent = "Mapa indisponível.";
+      }
+    }
+
+    async function atualizar() {
+      try {
+        const resposta = await fetch("/dados");
+        const dados = await resposta.json();
+        dados.reverse();
+
+        const horarios = dados.map(d => d.horario.slice(11));
+        graficoTemp.data.labels = horarios;
+        graficoTemp.data.datasets[0].data = dados.map(d => d.temperatura);
+        graficoTemp.update();
+
+        graficoUmid.data.labels = horarios;
+        graficoUmid.data.datasets[0].data = dados.map(d => d.umidade);
+        graficoUmid.update();
+
+        if (dados.length > 0) {
+          const ultima = dados[dados.length - 1];
+          document.getElementById("temp-atual").textContent = ultima.temperatura + " °C";
+          document.getElementById("umid-atual").textContent = ultima.umidade + " %";
+          document.getElementById("status").textContent = "Última leitura: " + ultima.horario;
+
+          const t = estatisticas(dados.map(d => d.temperatura));
+          const u = estatisticas(dados.map(d => d.umidade));
+          document.getElementById("t-media").textContent = t.media.toFixed(1);
+          document.getElementById("t-min").textContent = t.minima.toFixed(1);
+          document.getElementById("t-max").textContent = t.maxima.toFixed(1);
+          document.getElementById("u-media").textContent = u.media.toFixed(1);
+          document.getElementById("u-min").textContent = u.minima.toFixed(1);
+          document.getElementById("u-max").textContent = u.maxima.toFixed(1);
+
+          const alerta = document.getElementById("alerta");
+          if (ultima.temperatura >= LIMITE_CALOR) {
+            alerta.className = "alerta-calor";
+            alerta.textContent = "Alerta de calor: " + ultima.temperatura + " °C, acima de " + LIMITE_CALOR + " °C.";
+          } else {
+            alerta.className = "alerta-ok";
+            alerta.textContent = "Sem alertas: temperatura abaixo de " + LIMITE_CALOR + " °C.";
+          }
+
+          if (marcador) {
+            marcador.setPopupContent("Temperatura: " + ultima.temperatura + " °C<br>Umidade: " + ultima.umidade + " %");
+          }
+        } else {
+          document.getElementById("status").textContent = "Ainda não há leituras.";
+          document.getElementById("alerta").textContent = "Sem leituras ainda.";
+        }
+      } catch (erro) {
+        document.getElementById("status").textContent = "Sem conexão com o servidor.";
+      }
+    }
+
+    iniciarMapa();
+    atualizar();
+    setInterval(atualizar, 5000);
+  </script>
+</body>
+</html>
