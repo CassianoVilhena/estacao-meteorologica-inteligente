@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file
+import random
 
 app = Flask(__name__)
 
@@ -57,8 +58,25 @@ def receber_dados():
     print("Recebido:", dado)
     return jsonify({"status": "ok"})
 
+
+def gerar_leitura_simulada():
+    temperatura = round(random.uniform(20, 35), 1)
+    umidade = round(random.uniform(40, 80), 1)
+    horario = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with conectar() as conn:
+        conn.execute(
+            """INSERT INTO leituras
+            (temperatura, umidade, horario)
+            VALUES (?, ?, ?)""",
+            (temperatura, umidade, horario)
+        )
+
+
 @app.route("/dados", methods=["GET"])
 def listar_dados():
+    gerar_leitura_simulada()
+
     with conectar() as conn:
         linhas = conn.execute(
             """SELECT temperatura, umidade, horario
